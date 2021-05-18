@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 
 class MoCo(nn.Module):
-    def __init__(self, base_network, K, T, m, device):
+    def __init__(self, base_network, K, T, m, feature_dim, device):
         '''
         :param base_network: Base classifier
         :param K: Queue size
@@ -16,14 +16,14 @@ class MoCo(nn.Module):
         self.T = T
         self.m = m
         self.device = device
-        self.f_k = base_network()
-        self.f_q = base_network()
+        self.f_k = base_network(num_classes=feature_dim)
+        self.f_q = base_network(num_classes=feature_dim)
 
         # MoCoV2 improvement - change fc layer to 2-layer MLP
         dim0, dim1 = self.f_q.fc.weight.shape
-        self.f_q = nn.Sequential(nn.Linear(dim1, dim1), nn.ReLU(), nn.Linear(dim1, dim0))
+        self.f_q.fc = nn.Sequential(nn.Linear(dim1, dim1), nn.ReLU(), nn.Linear(dim1, dim0))
         dim0, dim1 = self.f_k.fc.weight.shape
-        self.f_k = nn.Sequential(nn.Linear(dim1, dim1), nn.ReLU(), nn.Linear(dim1, dim0))
+        self.f_k.fc = nn.Sequential(nn.Linear(dim1, dim1), nn.ReLU(), nn.Linear(dim1, dim0))
 
         # Init to same weights and turn of gradient calculation for f_k
         for p_k, p_q in zip(self.f_k.parameters(), self.f_q.parameters()):
@@ -40,12 +40,12 @@ class MoCo(nn.Module):
 
         N, C = q.shape
 
-        l_pos = torch.bmm(q.view(N, 1, C), k.view(N, C, 1))
+        l_pos = torch.bmm(q.view(N, 1, C), k.view(N, C, 1)).squeeze(-1)
         l_neg = torch.mm(q.view(N, C), queue.clone().detach().view(C, self.K))
 
         logits = torch.cat([l_pos, l_neg], dim=1) / self.T
 
-        labels = torch.zeros(N).to(self.device)
+        labels = torch.zeros(N, dtype=torch.long).to(self.device)
 
         for p_k, p_q in zip(self.f_k.parameters(), self.f_q.parameters()):
             p_k.data = self.m * p_k + (1.0-self.m) * p_q
