@@ -25,7 +25,7 @@ def get_args():
                         help='Weight decay for SGD optimizer(pretrain)')
     parser.add_argument('--momentum', type=int, default=0.9,
                         help='Momentum for SGD optimizer(pretrain)')
-    parser.add_argument('--batch-size', type=int, default=128,
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='Batch size to use')
     parser.add_argument('--epochs', type=int, default=800,
                         help='Num of epochs to train on(pretrain)')
@@ -36,7 +36,7 @@ def get_args():
                         help='Weight decay for SGD optimizer linear classifier train')
     parser.add_argument('--momentum2', type=int, default=0.9,
                         help='Momentum for SGD optimizer linear classifier train')
-    parser.add_argument('--batch-size2', type=int, default=128,
+    parser.add_argument('--batch-size2', type=int, default=64,
                         help='Batch size to use linear classifier train')
     parser.add_argument('--epochs2', type=int, default=200,
                         help='Num of epochs to train on linear classifier train')
@@ -241,7 +241,7 @@ def unsupervised_train(loader, model, device, args):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
     # Init queue
-    queue = F.normalize(torch.randn(args.feature_dim, args.K).to(device))
+    queue = F.normalize(torch.randn(args.K, args.feature_dim).to(device))
 
     for epoch in range(args.epochs):
         print(f'Feature: epoch: {epoch}')
