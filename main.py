@@ -7,7 +7,6 @@ import torch.nn.functional as F
 import torchvision
 from torchvision.transforms import transforms
 import torchvision.models as models
-from tqdm import tqdm
 import time
 
 from Models.MoCo import MoCo
@@ -129,11 +128,15 @@ def main():
     print('Init model')
     model = MoCo(models.resnet50, args.K, args.T, args.m, args.feature_dim, device).to(device)
 
-    print(f'Unsupervised pretraining started at: {time.ctime()}\n')
-    unsupervised_train(train_dataloader, model, device, args)
-    print(f'\nUnsupervised pretraining done at: {time.ctime()}\n')
+    if os.path.isfile(os.path.join(args.save_path, f'moco{args.epochs}.pth')):
+        print(f'Loading moco{args.epochs}.pth checkpoint')
+        model.load_state_dict(torch.load(os.path.join(args.save_path, f'moco{args.epochs}.pth')))
+    else:
+        print(f'Unsupervised pretraining started at: {time.ctime()}\n')
+        unsupervised_train(train_dataloader, model, device, args)
+        print(f'\nUnsupervised pretraining done at: {time.ctime()}\n')
+        torch.save(model.state_dict(), os.path.join(args.save_path, f'moco{args.epochs}.pth'))
 
-    torch.save(model.state_dict(), os.path.join(args.save_path, f'moco{args.epochs}.pth'))
 
     print(f'\nLinear classifier training started at: {time.ctime()}\n')
     linear_classifier_train_eval(train_linear_dataloader, val_dataloader, model, device, args)
@@ -163,6 +166,17 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
     optimizer = torch.optim.SGD(parameters, args.lr2, momentum=args.momentum2, weight_decay=args.weight_decay2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs2, eta_min=0, last_epoch=-1)
     best_acc = 0
+
+    save_path = os.path.join(args.save_path, f'classifier.pthbest')
+    if os.path.isfile(save_path):
+        print('Loading linear checkpoint')
+        checkpoint = torch.load(save_path, map_location=device)
+        args.epochs2 = args.epochs2 - checkpoint['epoch']
+        encoder.load_state_dict(checkpoint['encoder'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        best_acc = checkpoint['best_acc']
+
     for epoch in range(args.epochs2):
         print(f'Linear: epoch: {epoch}')
         train_linear_for_epoch(train_loader, encoder, criterion, optimizer, device, args)
@@ -170,7 +184,9 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
         acc = validate(val_loader, encoder, criterion, device, args)
         if acc > best_acc:
             best_acc = acc
-            torch.save(encoder.state_dict(), os.path.join(args.save_path, f'classifier.pthbest'))
+            state = {'epoch': {epoch}, 'encoder': encoder.state_dict(), 'best_acc': best_acc,
+                     'optimizer': optimizer.state_dict(), 'scheduler': scheduler.state_dict()}
+            torch.save(state, save_path)
 
     torch.save(encoder.state_dict(), os.path.join(args.save_path, f'classifier.pth{args.epochs2}'))
 
@@ -191,13 +207,12 @@ def validate(loader, encoder, criterion, device, args):
         print(f'Linear [TEST] Acc: {100.*correct/total:.3f}')
         return correct/total
 
-
 def train_linear_for_epoch(loader, encoder, criterion, optimizer, device, args):
     loader.eval()
     epoch_loss = 0
     correct = 0
     total = 0
-    for x, y in tqdm(loader):
+    for x, y in loader:
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         outputs = encoder(x)
@@ -219,7 +234,7 @@ def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
     model.train()
     epoch_loss = 0
     total = 0
-    for (x_q, x_k), _ in tqdm(loader):
+    for (x_q, x_k), _ in loader:
         x_q, x_k = x_q.to(device), x_k.to(device)
 
         logits, labels, k = model(x_q, x_k, queue, return_k=True)
@@ -240,14 +255,29 @@ def unsupervised_train(loader, model, device, args):
     optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
-    # Init queue
-    queue = F.normalize(torch.randn(args.K, args.feature_dim).to(device))
+    save_path = os.path.join(args.save_path, f'moco.pth')
+    if os.path.isfile(save_path):
+        print('Loading moco checkpoint')
+        checkpoint = torch.load(save_path, map_location=device)
+        args.epochs = args.epochs - checkpoint['epoch']
+        model.load_state_dict(checkpoint['model_state'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        queue = checkpoint['queue']
+
+    # Init new queue
+    else:
+        queue = F.normalize(torch.randn(args.K, args.feature_dim).to(device))
 
     for epoch in range(args.epochs):
         print(f'Feature: epoch: {epoch}')
         epoch_loss, queue = train_for_epoch(loader, model, criterion, optimizer, queue, device, args)
         scheduler.step()
         print(f'Feature: [TRAIN] loss: {epoch_loss:.3f}')
+        state = {'epoch': epoch, 'model_state': model.state_dict(), 'optimizer': optimizer.state_dict(),
+                 'scheduler': scheduler.state_dict(), 'queue': queue}
+        torch.save(state, save_path)
+        print(f'Saved model at epoch {epoch}')
 
 if __name__ == '__main__':
     main()
