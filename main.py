@@ -18,7 +18,7 @@ def get_args():
     parser.add_argument('--dataset-filename', type=str, default='imagenette2-160.tgz',
                         help='Dataset to train on')
 
-    parser.add_argument('--lr', type=int, default=0.015,
+    parser.add_argument('--lr', type=int, default=0.01,
                         help='lr used for SGD optimizer(pretrain)')
     parser.add_argument('--weight-decay', type=int, default=0.0001,
                         help='Weight decay for SGD optimizer(pretrain)')
@@ -49,7 +49,7 @@ def get_args():
     parser.add_argument('--feature-dim', type=int, default=128,
                         help='Feature dimension')
 
-    parser.add_argument('--save-path', type=str, default='./checkpoint',
+    parser.add_argument('--save-path', type=str, default='./checkpoints',
                         help='Path to save checkpoints')
     args = parser.parse_args()
     return args
@@ -166,18 +166,19 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
     optimizer = torch.optim.SGD(parameters, args.lr2, momentum=args.momentum2, weight_decay=args.weight_decay2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs2, eta_min=0, last_epoch=-1)
     best_acc = 0
+    start_epoch = 0
 
     save_path = os.path.join(args.save_path, f'classifier.pthbest')
     if os.path.isfile(save_path):
-        print('Loading linear checkpoint')
+        print('Loading linear checkpoints')
         checkpoint = torch.load(save_path, map_location=device)
-        args.epochs2 = args.epochs2 - checkpoint['epoch']
+        start_epoch = checkpoint['epoch'] + 1
         encoder.load_state_dict(checkpoint['encoder'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
         best_acc = checkpoint['best_acc']
 
-    for epoch in range(args.epochs2):
+    for epoch in range(start_epoch, args.epochs2, 1):
         print(f'Linear: epoch: {epoch}')
         train_linear_for_epoch(train_loader, encoder, criterion, optimizer, device, args)
         scheduler.step()
@@ -255,11 +256,12 @@ def unsupervised_train(loader, model, device, args):
     optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
+    start_epoch = 0
     save_path = os.path.join(args.save_path, f'moco.pth')
     if os.path.isfile(save_path):
         print('Loading moco checkpoint')
         checkpoint = torch.load(save_path, map_location=device)
-        args.epochs = args.epochs - checkpoint['epoch']
+        start_epoch = checkpoint['epoch'] + 1
         model.load_state_dict(checkpoint['model_state'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
@@ -269,7 +271,7 @@ def unsupervised_train(loader, model, device, args):
     else:
         queue = F.normalize(torch.randn(args.K, args.feature_dim).to(device))
 
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs, 1):
         print(f'Feature: epoch: {epoch}')
         epoch_loss, queue = train_for_epoch(loader, model, criterion, optimizer, queue, device, args)
         scheduler.step()
