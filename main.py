@@ -9,44 +9,44 @@ from torchvision.transforms import transforms
 import torchvision.models as models
 import time
 
-from Models.MoCo import MoCo
+from Models.MoCo import MoCo, LinearClassifier
 from utils import TwoCropsTransform
 
 
 def get_args():
     parser = argparse.ArgumentParser(description='Parameters for MoCoV2 training')
-    parser.add_argument('--dataset-filename', type=str, default='imagenette2.tgz',
+    parser.add_argument('--dataset-filename', type=str, default='imagenette2-160.tgz',
                         help='Dataset to train on')
 
-    parser.add_argument('--lr', type=int, default=0.01,
+    parser.add_argument('--lr', type=int, default=0.001,
                         help='lr used for SGD optimizer(pretrain)')
-    parser.add_argument('--weight-decay', type=int, default=0.0001,
+    parser.add_argument('--weight-decay', type=int, default=1e-6,
                         help='Weight decay for SGD optimizer(pretrain)')
     parser.add_argument('--momentum', type=int, default=0.9,
                         help='Momentum for SGD optimizer(pretrain)')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--batch-size', type=int, default=256,
                         help='Batch size to use')
     parser.add_argument('--epochs', type=int, default=800,
                         help='Num of epochs to train on(pretrain)')
 
     parser.add_argument('--lr2', type=int, default=0.1,
                         help='lr used for SGD optimizer linear classifier train')
-    parser.add_argument('--weight-decay2', type=int, default=0.0,
+    parser.add_argument('--weight-decay2', type=int, default=1e-6,
                         help='Weight decay for SGD optimizer linear classifier train')
     parser.add_argument('--momentum2', type=int, default=0.9,
                         help='Momentum for SGD optimizer linear classifier train')
-    parser.add_argument('--batch-size2', type=int, default=64,
+    parser.add_argument('--batch-size2', type=int, default=256,
                         help='Batch size to use linear classifier train')
     parser.add_argument('--epochs2', type=int, default=200,
                         help='Num of epochs to train on linear classifier train')
 
-    parser.add_argument('--K', type=int, default=65536,
+    parser.add_argument('--K', type=int, default=1024,
                         help='queue size to use')
-    parser.add_argument('--T', type=int, default=0.07,
+    parser.add_argument('--T', type=int, default=0.05,
                         help='Logits temperature')
     parser.add_argument('--m', type=int, default=0.999,
                         help='MoCo momentum value to use to update encoder key parameters')
-    parser.add_argument('--feature-dim', type=int, default=128,
+    parser.add_argument('--feature-dim', type=int, default=64,
                         help='Feature dimension')
 
     parser.add_argument('--save-path', type=str, default='./checkpoints',
@@ -145,25 +145,13 @@ def main():
     print('Done!')
 
 def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
-    encoder = models.resnet50(num_classes=10).to(device)
-    for name, param in encoder.named_parameters():
-        if name not in ['fc.weight', 'fc.bias']:
-            param.requires_grad = False
-    encoder.fc.weight.data.normal_(mean=0.0, std=0.01)
-    encoder.fc.bias.data.zero_()
-
-    state_dict = model.state_dict()
-    for k in list(state_dict.keys()):
-        if k.startswith('f_q') and not k.startswith('f_q.fc'):
-            state_dict[k[len("f_q."):]] = state_dict[k]
-        del state_dict[k]
-
-    encoder.load_state_dict(state_dict, strict=False)
+    model.f_q.fc = nn.Sequential(*list(model.f_q.fc.children())[:-1])  # Remove projection head
+    out_dim = list(model.f_q.fc.children())[-1].out_features
+    classifier = LinearClassifier(out_dim, 10).to(device)
 
     # Loss function, optimizer and schedualer
     criterion = nn.CrossEntropyLoss().to(device)
-    parameters = list(filter(lambda p: p.requires_grad, encoder.parameters()))
-    optimizer = torch.optim.SGD(parameters, args.lr2, momentum=args.momentum2, weight_decay=args.weight_decay2)
+    optimizer = torch.optim.SGD(classifier.parameters(), args.lr2, momentum=args.momentum2, weight_decay=args.weight_decay2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs2, eta_min=0, last_epoch=-1)
     best_acc = 0
     start_epoch = 0
@@ -173,34 +161,36 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
         print('Loading linear checkpoints')
         checkpoint = torch.load(save_path, map_location=device)
         start_epoch = checkpoint['epoch'] + 1
-        encoder.load_state_dict(checkpoint['encoder'])
+        classifier.load_state_dict(checkpoint['classifier'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
         best_acc = checkpoint['best_acc']
 
     for epoch in range(start_epoch, args.epochs2, 1):
         print(f'Linear: epoch: {epoch}')
-        train_linear_for_epoch(train_loader, encoder, criterion, optimizer, device, args)
+        train_linear_for_epoch(train_loader, classifier, model, criterion, optimizer, device, args)
         scheduler.step()
-        acc = validate(val_loader, encoder, criterion, device, args)
+        acc = validate(val_loader, classifier, model, criterion, device, args)
         if acc > best_acc:
             best_acc = acc
-            state = {'epoch': {epoch}, 'encoder': encoder.state_dict(), 'best_acc': best_acc,
+            state = {'epoch': epoch, 'classifier': classifier.state_dict(), 'best_acc': best_acc,
                      'optimizer': optimizer.state_dict(), 'scheduler': scheduler.state_dict()}
             torch.save(state, save_path)
             print(f'Saved model at epoch {epoch}')
 
-    torch.save(encoder.state_dict(), os.path.join(args.save_path, f'classifier.pth{args.epochs2}'))
+    torch.save(classifier.state_dict(), os.path.join(args.save_path, f'classifier.pth{args.epochs2}'))
 
-def validate(loader, encoder, criterion, device, args):
-    encoder.eval()
+def validate(loader, classifier, model, criterion, device, args):
+    classifier.eval()
     test_loss = 0
     correct = 0
     total = 0
     with torch.no_grad():
         for x, y in loader:
             x, y = x.to(device), y.to(device)
-            outputs = encoder(x)
+            with torch.no_grad():
+                features = model(x)
+            outputs = classifier(features)
             loss = criterion(outputs, y)
             test_loss += loss.item()
             _, predicted = outputs.max(1)
@@ -209,15 +199,17 @@ def validate(loader, encoder, criterion, device, args):
         print(f'Linear [TEST] Acc: {100.*correct/total:.3f}')
         return correct/total
 
-def train_linear_for_epoch(loader, encoder, criterion, optimizer, device, args):
-    encoder.eval()
+def train_linear_for_epoch(loader, classifier, model, criterion, optimizer, device, args):
+    classifier.train()
     epoch_loss = 0
     correct = 0
     total = 0
     for x, y in loader:
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        outputs = encoder(x)
+        with torch.no_grad():
+            features = model(x)
+        outputs = classifier(x)
         loss = criterion(outputs, y)
         epoch_loss += loss.item()
         loss.backward()
@@ -226,11 +218,11 @@ def train_linear_for_epoch(loader, encoder, criterion, optimizer, device, args):
         correct += torch.sum(pred.eq(y)).item()
         total += y.numel()
 
-    print(f'Linear: [TRAIN] loss: {epoch_loss:.3f}')
+    print(f'Linear: [TRAIN] loss: {epoch_loss/len(loader):.3f}')
     print(f'Linear: [TRAIN] Acc: {100.*correct/total:.3f}')
 
 def enqueue_and_dequeue(queue, k):
-    return torch.cat([queue, k], dim=0)[k.shape[0]:]
+    return torch.cat([queue, k], dim=0)[k.shape[0]:, :]
 
 def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
     model.train()
@@ -239,7 +231,8 @@ def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
     for (x_q, x_k), _ in loader:
         x_q, x_k = x_q.to(device), x_k.to(device)
 
-        logits, labels, k = model(x_q, x_k, queue, return_k=True)
+        logits, k = model(x_q, x_k, queue, return_k=True)
+        labels = torch.zeros(k.shape[0], dtype=torch.long).to(device)
         loss = criterion(logits, labels)
         epoch_loss += loss.item()
 
@@ -247,14 +240,15 @@ def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
         loss.backward()
         optimizer.step()
 
-        queue = enqueue_and_dequeue(queue, k)
+        with torch.no_grad():
+            queue = torch.cat([queue, k], dim=0)[k.shape[0]:, :]
 
     return epoch_loss/len(loader), queue
 
 def unsupervised_train(loader, model, device, args):
     # Loss function, optimizer and schedualer
     criterion = nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    optimizer = torch.optim.SGD(model.f_q.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
     start_epoch = 0
@@ -272,11 +266,13 @@ def unsupervised_train(loader, model, device, args):
     else:
         queue = F.normalize(torch.randn(args.K, args.feature_dim).to(device))
 
+    model.train()
+
     for epoch in range(start_epoch, args.epochs, 1):
         print(f'Feature: epoch: {epoch}')
         epoch_loss, queue = train_for_epoch(loader, model, criterion, optimizer, queue, device, args)
         scheduler.step()
-        print(f'Feature: [TRAIN] loss: {epoch_loss:.3f}')
+        print(f'Feature: [TRAIN] loss: {epoch_loss}')
         state = {'epoch': epoch, 'model_state': model.state_dict(), 'optimizer': optimizer.state_dict(),
                  'scheduler': scheduler.state_dict(), 'queue': queue}
         if epoch % 20 == 0:
