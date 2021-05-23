@@ -15,7 +15,7 @@ from utils import TwoCropsTransform
 
 def get_args():
     parser = argparse.ArgumentParser(description='Parameters for MoCoV2 training')
-    parser.add_argument('--dataset-filename', type=str, default='imagenette2-160.tgz',
+    parser.add_argument('--dataset-filename', type=str, default='imagenette2.tgz',
                         help='Dataset to train on')
 
     parser.add_argument('--lr', type=int, default=0.01,
@@ -188,6 +188,7 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
             state = {'epoch': {epoch}, 'encoder': encoder.state_dict(), 'best_acc': best_acc,
                      'optimizer': optimizer.state_dict(), 'scheduler': scheduler.state_dict()}
             torch.save(state, save_path)
+            print(f'Saved model at epoch {epoch}')
 
     torch.save(encoder.state_dict(), os.path.join(args.save_path, f'classifier.pth{args.epochs2}'))
 
@@ -278,8 +279,9 @@ def unsupervised_train(loader, model, device, args):
         print(f'Feature: [TRAIN] loss: {epoch_loss:.3f}')
         state = {'epoch': epoch, 'model_state': model.state_dict(), 'optimizer': optimizer.state_dict(),
                  'scheduler': scheduler.state_dict(), 'queue': queue}
-        torch.save(state, save_path)
-        print(f'Saved model at epoch {epoch}')
+        if epoch % 20 == 0:
+            torch.save(state, save_path)
+            print(f'Saved model at epoch {epoch}')
 
 if __name__ == '__main__':
     main()
