@@ -40,7 +40,7 @@ def get_args():
     parser.add_argument('--epochs2', type=int, default=200,
                         help='Num of epochs to train on linear classifier train')
 
-    parser.add_argument('--K', type=int, default=1024,
+    parser.add_argument('--K', type=int, default=8192,
                         help='queue size to use')
     parser.add_argument('--T', type=int, default=0.05,
                         help='Logits temperature')
@@ -241,7 +241,7 @@ def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
         optimizer.step()
 
         with torch.no_grad():
-            queue = torch.cat([queue, k], dim=0)[k.shape[0]:, :]
+            queue = torch.cat([queue, k], dim=0)[args.batch_size:, :]
 
     return epoch_loss/len(loader), queue
 
