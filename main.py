@@ -210,7 +210,7 @@ def validate(loader, encoder, criterion, device, args):
         return correct/total
 
 def train_linear_for_epoch(loader, encoder, criterion, optimizer, device, args):
-    loader.eval()
+    encoder.eval()
     epoch_loss = 0
     correct = 0
     total = 0
