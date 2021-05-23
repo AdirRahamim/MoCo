@@ -149,8 +149,8 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
     for name, param in encoder.named_parameters():
         if name not in ['fc.weight', 'fc.bias']:
             param.requires_grad = False
-    model.fc.weight.data.normal_(mean=0.0, std=0.01)
-    model.fc.bias.data.zero_()
+    encoder.fc.weight.data.normal_(mean=0.0, std=0.01)
+    encoder.fc.bias.data.zero_()
 
     state_dict = model.state_dict()
     for k in list(state_dict.keys()):
