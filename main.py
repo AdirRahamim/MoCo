@@ -152,7 +152,7 @@ def linear_classifier_train_eval(train_loader, val_loader, model, device, args):
     # Loss function, optimizer and schedualer
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.SGD(classifier.parameters(), args.lr2, momentum=args.momentum2, weight_decay=args.weight_decay2)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs2, eta_min=0, last_epoch=-1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs2 * len(train_loader), eta_min=0)
     best_acc = 0
     start_epoch = 0
 
@@ -241,7 +241,7 @@ def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
         optimizer.step()
 
         with torch.no_grad():
-            queue = torch.cat([queue, k], dim=0)[args.batch_size:, :]
+            queue = enqueue_and_dequeue(queue, k)
 
     return epoch_loss/len(loader), queue
 
@@ -249,7 +249,7 @@ def unsupervised_train(loader, model, device, args):
     # Loss function, optimizer and schedualer
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.SGD(model.f_q.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs * len(loader), eta_min=0)
 
     start_epoch = 0
     save_path = os.path.join(args.save_path, f'moco.pth')
