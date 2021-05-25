@@ -222,7 +222,7 @@ def train_linear_for_epoch(loader, classifier, model, criterion, optimizer, devi
     print(f'Linear: [TRAIN] Acc: {100.*correct/total:.3f}')
 
 def enqueue_and_dequeue(queue, k):
-    return torch.cat([queue, k], dim=0)[k.shape[0]:, :]
+    return torch.cat([queue, k.T], dim=1)[:, k.shape[0]:]
 
 def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
     model.train()
@@ -264,7 +264,7 @@ def unsupervised_train(loader, model, device, args):
 
     # Init new queue
     else:
-        queue = F.normalize(torch.randn(args.K, args.feature_dim).to(device))
+        queue = F.normalize(torch.randn(args.feature_dim, args.K).to(device))
 
     model.train()
 
@@ -273,9 +273,9 @@ def unsupervised_train(loader, model, device, args):
         epoch_loss, queue = train_for_epoch(loader, model, criterion, optimizer, queue, device, args)
         scheduler.step()
         print(f'Feature: [TRAIN] loss: {epoch_loss}')
-        state = {'epoch': epoch, 'model_state': model.state_dict(), 'optimizer': optimizer.state_dict(),
-                 'scheduler': scheduler.state_dict(), 'queue': queue}
         if epoch % 20 == 0:
+            state = {'epoch': epoch, 'model_state': model.state_dict(), 'optimizer': optimizer.state_dict(),
+                     'scheduler': scheduler.state_dict(), 'queue': queue}
             torch.save(state, save_path)
             print(f'Saved model at epoch {epoch}')
 

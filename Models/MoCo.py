@@ -54,7 +54,7 @@ class MoCo(nn.Module):
         N, C = q.shape
 
         l_pos = torch.bmm(q.view(N, 1, C), k.view(N, C, 1)).squeeze(-1)
-        l_neg = torch.mm(q.view(N, C), queue.view(C, self.K))
+        l_neg = torch.mm(q.view(N, C), queue)
 
         logits = torch.cat([l_pos, l_neg], dim=1) / self.T
 
