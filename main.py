@@ -202,7 +202,7 @@ def validate(loader, classifier, model, criterion, device, args):
         print(f'Linear [TEST] Acc: {100.*correct/total:.3f}')
         return correct/total
 
-def train_linear_for_epoch(loader, classifier, model, criterion, optimizer, device, args):
+def train_linear_for_epoch(loader, classifier, model, scheduler, criterion, optimizer, device, args):
     classifier.train()
     epoch_loss = 0
     correct = 0
@@ -217,6 +217,8 @@ def train_linear_for_epoch(loader, classifier, model, criterion, optimizer, devi
         epoch_loss += loss.item()
         loss.backward()
         optimizer.step()
+        scheduler.step()
+
         pred = torch.max(outputs, dim=1)[1]
         correct += torch.sum(pred.eq(y)).item()
         total += y.numel()
@@ -275,8 +277,7 @@ def unsupervised_train(loader, model, device, args):
 
     for epoch in range(start_epoch, args.epochs, 1):
         print(f'Feature: epoch: {epoch}')
-        epoch_loss, queue = train_for_epoch(loader, model, criterion, optimizer, queue, device, args)
-        scheduler.step()
+        epoch_loss, queue = train_for_epoch(loader, model, scheduler, criterion, optimizer, queue, device, args)
         print(f'Feature: [TRAIN] loss: {epoch_loss}')
         if epoch % 20 == 0:
             state = {'epoch': epoch, 'model_state': model.state_dict(), 'optimizer': optimizer.state_dict(),
