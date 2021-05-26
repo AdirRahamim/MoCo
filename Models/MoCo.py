@@ -45,12 +45,12 @@ class MoCo(nn.Module):
 
         with torch.no_grad():
             for p_k, p_q in zip(self.f_k.parameters(), self.f_q.parameters()):
-                p_k.data = self.m * p_k + (1.0 - self.m) * p_q
+                p_k.data = self.m * p_k.data + (1.0 - self.m) * p_q.data
 
-            shuffle_index, unshuffle_index = shuffle_batch(x_q.shape[0], self.device)
-            k = F.normalize(self.f_k(x_k[shuffle_index]))
-            k = k[unshuffle_index]
-
+            # shuffle_index, unshuffle_index = shuffle_batch(x_q.shape[0], self.device)
+            # k = F.normalize(self.f_k(x_k[shuffle_index]))
+            # k = k[unshuffle_index]
+            k = F.normalize((self.f_k(x_k)), dim=1)
         N, C = q.shape
 
         l_pos = torch.bmm(q.view(N, 1, C), k.view(N, C, 1)).squeeze(-1)

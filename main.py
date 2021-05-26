@@ -15,7 +15,7 @@ from utils import TwoCropsTransform
 
 def get_args():
     parser = argparse.ArgumentParser(description='Parameters for MoCoV2 training')
-    parser.add_argument('--dataset-filename', type=str, default='imagenette2-160.tgz',
+    parser.add_argument('--dataset-filename', type=str, default='imagenette2.tgz',
                         help='Dataset to train on')
 
     parser.add_argument('--lr', type=int, default=0.001,
@@ -24,7 +24,7 @@ def get_args():
                         help='Weight decay for SGD optimizer(pretrain)')
     parser.add_argument('--momentum', type=int, default=0.9,
                         help='Momentum for SGD optimizer(pretrain)')
-    parser.add_argument('--batch-size', type=int, default=256,
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='Batch size to use')
     parser.add_argument('--epochs', type=int, default=800,
                         help='Num of epochs to train on(pretrain)')
@@ -35,7 +35,7 @@ def get_args():
                         help='Weight decay for SGD optimizer linear classifier train')
     parser.add_argument('--momentum2', type=int, default=0.9,
                         help='Momentum for SGD optimizer linear classifier train')
-    parser.add_argument('--batch-size2', type=int, default=256,
+    parser.add_argument('--batch-size2', type=int, default=264,
                         help='Batch size to use linear classifier train')
     parser.add_argument('--epochs2', type=int, default=200,
                         help='Num of epochs to train on linear classifier train')
@@ -46,7 +46,7 @@ def get_args():
                         help='Logits temperature')
     parser.add_argument('--m', type=int, default=0.999,
                         help='MoCo momentum value to use to update encoder key parameters')
-    parser.add_argument('--feature-dim', type=int, default=64,
+    parser.add_argument('--feature-dim', type=int, default=128,
                         help='Feature dimension')
 
     parser.add_argument('--save-path', type=str, default='./checkpoints',
@@ -78,7 +78,7 @@ def main():
                         'std': [0.229, 0.224, 0.225]}
     train_transforms = TwoCropsTransform(transforms.Compose([
         transforms.RandomResizedCrop(size, scale=(0.2, 1.)),
-        transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+        transforms.RandomApply([transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)], p=0.8),
         transforms.RandomGrayscale(p=0.2),
         transforms.RandomApply([transforms.GaussianBlur(kernel_size=ks)]),  # MoCoV2
         transforms.RandomHorizontalFlip(),
@@ -103,25 +103,28 @@ def main():
     train_dataloader = torch.utils.data.DataLoader(
         dataset_train,
         batch_size=args.batch_size,
-        num_workers=8,
+        num_workers=2,
         drop_last=True,
         shuffle=True,
+        pin_memory=True,
     )
 
     train_linear_dataloader = torch.utils.data.DataLoader(
         dataset_train_linear,
         batch_size=args.batch_size2,
-        num_workers=8,
+        num_workers=2,
         drop_last=True,
         shuffle=True,
+        pin_memory=True
     )
 
     val_dataloader = torch.utils.data.DataLoader(
         dataset_val,
         batch_size=args.batch_size2,
-        num_workers=8,
+        num_workers=2,
         drop_last=True,
         shuffle=False,
+        pin_memory=True
     )
 
     # Init model
@@ -225,7 +228,6 @@ def enqueue_and_dequeue(queue, k):
     return torch.cat([queue, k.T], dim=1)[:, k.shape[0]:]
 
 def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
-    model.train()
     epoch_loss = 0
     total = 0
     for (x_q, x_k), _ in loader:
@@ -248,8 +250,11 @@ def train_for_epoch(loader, model, criterion, optimizer, queue, device, args):
 def unsupervised_train(loader, model, device, args):
     # Loss function, optimizer and schedualer
     criterion = nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(model.f_q.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    # optimizer = torch.optim.Adam(model.f_q.parameters(), lr=0.001, weight_decay=args.weight_decay)
+
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs * len(loader), eta_min=0)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 100, 0.1)
 
     start_epoch = 0
     save_path = os.path.join(args.save_path, f'moco.pth')
